@@ -1,0 +1,23 @@
+# Native build of gcr.io/cloud-robotics-releases/chart-assignment-controller,
+# which is published for amd64 only. Mirrors the upstream Bazel image
+# (//src/go/cmd/chart-assignment-controller:chart-assignment-controller-image):
+# distroless/cc + an empty Helm v2 home + the controller binary.
+#
+# The binary is built without cgo: upstream links it against a glibc 2.31
+# sysroot, which does not exist for arm64 in its build.
+
+# Upstream's pinned distroless/cc digest (multi-arch index).
+ARG BASE=gcr.io/distroless/cc@sha256:8aad707f96620ee89e27febef51b01c6ff244277a3560fcfcfbe68633ef09193
+
+FROM docker.io/library/golang:1.26.1 AS build
+ARG CORE_COMMIT
+WORKDIR /src
+RUN git clone --filter=blob:none https://github.com/googlecloudrobotics/core . \
+    && git checkout "${CORE_COMMIT}"
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+      -o /chart-assignment-controller-app ./src/go/cmd/chart-assignment-controller
+
+FROM ${BASE}
+COPY --chown=0:0 helm-home/ /home/nonroot/.helm/
+COPY --from=build /chart-assignment-controller-app /chart-assignment-controller-app
+ENTRYPOINT ["/chart-assignment-controller-app"]

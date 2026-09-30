@@ -1,0 +1,22 @@
+# Native build of ghcr.io/intrinsic-ai/code-execution-jupyter-server, which is
+# published for amd64 only. The build steps are those recorded in the published
+# image (sha256:e14b4e15...), and requirements.txt, the code_execution wheel and
+# ipython_kernel_config.py were copied from its layers. requirements.txt pins
+# every package by hash, including the hashes of the aarch64 wheels.
+FROM docker.io/library/python:3.14.7-slim-trixie
+
+ENV PIP_ROOT_USER_ACTION=ignore
+COPY ./requirements.txt /tmp
+COPY ./code_execution-0.0.1-py3-none-any.whl /tmp
+COPY --chmod=0755 ./ipython_kernel_config.py /etc/ipython/ipython_kernel_config.py
+RUN apt-get update && \
+  apt-get install -y build-essential && \
+  pip install --require-hashes -r /tmp/requirements.txt && \
+  pip install --no-deps --no-index /tmp/code_execution-0.0.1-py3-none-any.whl && \
+  apt-get remove -y --purge build-essential && \
+  apt-get autoremove -y && \
+  rm -rf /var/lib/apt/lists/*
+RUN adduser defaultuser
+USER defaultuser
+WORKDIR /home/defaultuser
+ENTRYPOINT ["jupyter", "server", "--ip=0.0.0.0", "--port=8888", "--IdentityProvider.token=''", "--ServerApp.disable_check_xsrf=True", "--notebook-dir=/home/defaultuser"]
