@@ -1,0 +1,51 @@
+# Native build of the flowstate_ros_bridge service image (the bundle OMTS
+# downloads is amd64-only). Same layout as intrinsic-ai/sdk-ros's
+# service.Dockerfile (overlay and result stages), on top of the natively built
+# underlay (../sdk-ros-underlay), so the SDK is not compiled again.
+# Build with the sdk-ros repository as the context:
+#   podman build -f .../Containerfile -t localhost/flowstate-ros-bridge:arm64 ~/arm64-src/sdk-ros
+ARG ROS_DISTRO=lyrical
+ARG UNDERLAY=localhost/sdk-ros-underlay:lyrical
+
+FROM ${UNDERLAY} AS overlay
+ARG ROS_DISTRO
+ARG DEPENDENCIES="nlohmann-json3-dev ros-lyrical-resource-retriever"
+COPY flowstate_interfaces /opt/ros/overlay/src/flowstate_interfaces
+COPY flowstate_ros_bridge /opt/ros/overlay/src/flowstate_ros_bridge
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && . /opt/ros/underlay/install/setup.sh \
+    && apt-get update \
+    && apt-get install -y ros-${ROS_DISTRO}-rmw-zenoh-cpp python3-protobuf ${DEPENDENCIES} \
+    && rosdep update \
+    && cd /opt/ros/overlay \
+    && rosdep install --from-paths src /opt/ros/underlay/src --ignore-src -r -y --dependency-types exec \
+    && dpkg --get-selections > /service_exec_apt_packages.txt \
+    && rosdep install --from-paths src --ignore-src -r -y \
+    && colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release \
+         --packages-up-to flowstate_ros_bridge \
+    && rm -rf build log /var/lib/apt/lists/*
+
+FROM docker.io/library/ros:${ROS_DISTRO}
+ARG ROS_DISTRO
+ARG DEPENDENCIES="nlohmann-json3-dev ros-lyrical-resource-retriever"
+COPY --from=overlay /service_exec_apt_packages.txt /service_exec_apt_packages.txt
+RUN apt-get update \
+    && apt-cache dumpavail | dpkg --merge-avail \
+    && dpkg --set-selections < /service_exec_apt_packages.txt \
+    && apt-get dselect-upgrade -y \
+    && apt-get install -y ros-${ROS_DISTRO}-rmw-zenoh-cpp ${DEPENDENCIES} \
+    && rm -rf /var/lib/apt/lists/*
+ENV ROS_HOME=/tmp
+ENV RMW_IMPLEMENTATION=rmw_zenoh_cpp
+COPY --from=overlay /opt/ros/underlay/install /opt/ros/underlay/install
+COPY --from=overlay /opt/ros/overlay/install /opt/ros/overlay/install
+RUN sed --in-place \
+        --expression '$isource "/opt/ros/underlay/install/setup.bash"' \
+        --expression '$isource "/opt/ros/overlay/install/setup.bash"' \
+        --expression '$iexport RMW_IMPLEMENTATION=rmw_zenoh_cpp' \
+        --expression '$iexport ROS_HOME=/tmp' \
+        --expression '$iexport ZENOH_CONFIG_OVERRIDE='\'connect/endpoints=[\"tcp/zenoh-router.app-intrinsic-base.svc.cluster.local:7447\"]\''' \
+        /ros_entrypoint.sh
+ENV SERVICE_PACKAGE=flowstate_ros_bridge
+ENV SERVICE_NAME=flowstate_ros_bridge
+CMD exec /opt/ros/overlay/install/lib/${SERVICE_PACKAGE}/${SERVICE_NAME}_main

@@ -1,0 +1,30 @@
+# The underlay stage of intrinsic-ai/sdk-ros's service.Dockerfile (ROS 2 +
+# Intrinsic SDK built from source), built natively. Unlike upstream, the build
+# tree and Bazel cache are removed in the same step, so that the image only
+# holds /opt/ros/underlay/install (upstream's layer is tens of GB).
+# Build with a colcon workspace containing src/sdk-ros as the context:
+#   podman build -f .../Containerfile -t localhost/sdk-ros-underlay:lyrical ~/arm64-src/ros_ws
+ARG ROS_DISTRO=lyrical
+FROM docker.io/library/ros:${ROS_DISTRO}
+ARG ROS_DISTRO
+WORKDIR /opt/ros/underlay
+ENV ROS_HOME=/tmp
+RUN if [ -f /usr/lib/aarch64-linux-gnu/libxml2.so.16 ] && [ ! -f /usr/lib/aarch64-linux-gnu/libxml2.so.2 ]; then \
+        ln -s /usr/lib/aarch64-linux-gnu/libxml2.so.16 /usr/lib/aarch64-linux-gnu/libxml2.so.2; \
+    fi \
+    && if [ -f /usr/lib/x86_64-linux-gnu/libxml2.so.16 ] && [ ! -f /usr/lib/x86_64-linux-gnu/libxml2.so.2 ]; then \
+        ln -s /usr/lib/x86_64-linux-gnu/libxml2.so.16 /usr/lib/x86_64-linux-gnu/libxml2.so.2; \
+    fi
+ADD src/sdk-ros /opt/ros/underlay/src/sdk-ros
+RUN rm -rf /opt/ros/underlay/src/sdk-ros/intrinsic_sdk_bundle_library_py/test/functional_tests
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && apt-get update \
+    && rosdep update \
+    && rosdep install --from-paths src --ignore-src -r -y \
+    && apt install -y ros-${ROS_DISTRO}-ament-cmake-vendor-package \
+    && colcon build \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release \
+        --event-handlers=console_direct+ \
+        --merge-install \
+        --packages-up-to intrinsic_sdk \
+    && rm -rf build log /root/.cache/bazel /root/.cache/bazelisk /var/lib/apt/lists/*
